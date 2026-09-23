@@ -127,8 +127,11 @@ response streams tool calls, Claude Code appends a new JSONL line per
 content block (thinking, then each tool_use) as it arrives — and **every
 line repeats that request's full cumulative `usage` object**, not a
 per-block increment. So a response with a thinking block + 6 tool calls
-writes 7 lines, all carrying identical `usage.output_tokens` /
-`cache_read_input_tokens` / etc., all sharing one `requestId`.
+writes 7 lines, all sharing one `requestId`. The input and cache fields are
+identical on every line, but `usage.output_tokens` **grows line by line** and
+only the last line carries the final count (measured 2026-09-23: 1,067 of
+1,067 multi-line responses). Keeping the first line instead of the max
+undercounts output about 3.3x — do not "simplify" the dedup to first-seen.
 
 Summing `usage` across every line — which is what both pollers originally
 did — overcounts by however many content blocks each response had. On a
@@ -226,7 +229,9 @@ command passthrough in Claude Code).
 - The `usage-meter` action is cross-platform (pure data) and needs no
   permissions.
 - Note: `pollToday` dedups token totals **per file**, while `pollUsageMeter` dedups **globally** (`mergeById`). If one `message.id` appears in multiple transcripts (forked/resumed sessions), the Today key can read slightly higher than a "today" Usage key. The Usage key's global dedup is the more accurate; the difference is usually nil (ids are unique per file).
-- Cost rates are user-overridable via **Stream Deck global settings** (`{rates:{opus:{in,out},…}}`), edited in the Usage key's Property Inspector (a grid bound to `getGlobalSettings`/`setGlobalSettings`, not the per-key `setSettings`). The plugin loads them on `getGlobalSettings` at register + every `didReceiveGlobalSettings` into `state.rates`, threaded into `aggregate`→`estimateCost`→`rateFor` (family-prefix, blank→default via `validNum`+`??`; `0` is a valid free rate). Cache multipliers (0.1×/1.25×) are not configurable; the `est` marker stays. Note: `Version` stays `1.2.0.0` — rates fold into that still-unshipped version, so the standing "bump Version on behavior change" rule doesn't apply here.
+- Cost rates are user-overridable via **Stream Deck global settings** (`{rates:{opus:{in,out},…}}`), edited in the Usage key's Property Inspector (a grid bound to `getGlobalSettings`/`setGlobalSettings`, not the per-key `setSettings`). The plugin loads them on `getGlobalSettings` at register + every `didReceiveGlobalSettings` into `state.rates`, threaded into `aggregate`→`estimateCost`→`rateFor` (family-prefix, blank→default via `validNum`+`??`; `0` is a valid free rate). Cache multipliers (read 0.1×, or 0.025× on Fable 5.1 and 0.05× on Opus 5.5; write 1.25× for 5-minute entries, 2× for 1-hour) are not configurable; the `est` marker stays.
+- Rates follow <https://platform.claude.com/docs/en/about-claude/pricing> (checked 2026-09-23; Foundry bills the same list rates as Claude Consumption Units). Two things are keyed by model-id substring rather than family in `src/usage.js`: `MODEL_RATES` (Opus 5.5 is $4/$20 vs. the $5/$25 opus default; a family `opus` override still wins over it) and `CACHE_READ_MULTS`. Do not add a new family for a cheaper sibling — `familyOf` drives the Model key's rotation and the override keys in global settings, so a new family would add a rotation entry and a PI row and orphan existing overrides. The `sonnet` family defaults to Sonnet 5's $2/$10; Sonnet 4.x ($3/$15) shares the key.
+- Cross-check for the cost estimate: `python3 ~/Developer/claude-usage-analysis/week_report.py 1` prices today with the same local-midnight day, the same max-per-`message.id` dedup and the same 5m/1h write split. Read it and a Today-window Usage key within the same minute; they should agree within ~1%. Reading 60-70% high means the Fable read multiplier is not applied; 2-3% high on a day with Opus 5.5 traffic means the Opus 5.5 base rate is not applied. The script prices only Fable 5.1, Opus 5.5, Opus 5, Sonnet 5 and Haiku 4.5, so compare on a day with no older models.
 
 ## Claude Status key (added 2026-07)
 

@@ -35,8 +35,8 @@ test("windowStartMs unknown kind falls back to today", () => {
 test("rateFor matches suffixed ids and bare aliases by family", () => {
   assert.deepEqual(rateFor("claude-opus-4-8"), [5, 25]);
   assert.deepEqual(rateFor("opus"), [5, 25]);
-  assert.deepEqual(rateFor("claude-sonnet-5"), [3, 15]);
-  assert.deepEqual(rateFor("sonnet"), [3, 15]);
+  assert.deepEqual(rateFor("claude-sonnet-5"), [2, 10]);
+  assert.deepEqual(rateFor("sonnet"), [2, 10]);
   assert.deepEqual(rateFor("claude-haiku-4-5-20251001"), [1, 5]);
   assert.deepEqual(rateFor("claude-fable-5"), [10, 50]);
 });
@@ -54,7 +54,7 @@ test("estimateCost prices each token bucket at standard rates", () => {
   assert.equal(estimateCost("claude-opus-4-8", { in: 0, out: M, cacheRead: 0, cacheCreate: 0 }), 25);
   assert.equal(estimateCost("claude-opus-4-8", { in: 0, out: 0, cacheRead: M, cacheCreate: 0 }), 0.5); // 0.1×5
   assert.equal(estimateCost("claude-opus-4-8", { in: 0, out: 0, cacheRead: 0, cacheCreate: M }), 6.25); // 1.25×5
-  assert.equal(estimateCost("claude-sonnet-5", { in: M, out: M, cacheRead: 0, cacheCreate: 0 }), 18); // 3+15
+  assert.equal(estimateCost("claude-sonnet-5", { in: M, out: M, cacheRead: 0, cacheCreate: 0 }), 12); // 2+10
 });
 
 test("estimateCost is 0 for unpriceable models", () => {
@@ -118,9 +118,9 @@ test("parseRequests falls back to requestId when message.id is absent", () => {
 });
 
 test("rateFor applies input/output overrides per family (partial keeps default)", () => {
-  const ov = { opus: { in: 4, out: 20 }, sonnet: { in: 2 } };
+  const ov = { opus: { in: 4, out: 20 }, sonnet: { in: 1 } };
   assert.deepEqual(rateFor("claude-opus-4-8", ov), [4, 20]);
-  assert.deepEqual(rateFor("claude-sonnet-5", ov), [2, 15]); // out defaults
+  assert.deepEqual(rateFor("claude-sonnet-5", ov), [1, 10]); // out defaults
   assert.deepEqual(rateFor("claude-haiku-4-5", ov), [1, 5]); // no override → default
 });
 
@@ -193,6 +193,40 @@ test("aggregateByModel groups by family, sorts by cost, drops empty groups", () 
   assert.ok(!out.some((e) => e.model === "haiku"), "pre-window request excluded");
   assert.ok(!out.some((e) => e.model === "other"), "zero-usage synthetic dropped");
   assert.deepEqual(aggregateByModel([], now), []);
+});
+
+// ---------- per-model rates (price list checked 2026-09-23) ----------
+// Fable 5.1 reads cache at 0.025x and Opus 5.5 is a cheaper model than Opus 5, so
+// neither the family rate nor a flat read multiplier prices them right. Both are
+// keyed by model id; the family (and its override key) is unchanged.
+test("estimateCost cache reads are priced per model id, not per family", () => {
+  const M = 1_000_000;
+  assert.equal(estimateCost("claude-fable-5-1", { cacheRead: M }), 0.25);
+  assert.equal(estimateCost("claude-mythos-5-1", { cacheRead: M }), 0.25);
+  assert.equal(estimateCost("claude-fable-5", { cacheRead: M }), 1); // same family, 0.1x
+  assert.equal(estimateCost("claude-opus-5-5", { cacheRead: M }), 0.2);
+  assert.equal(estimateCost("claude-opus-5", { cacheRead: M }), 0.5); // Opus 5 unchanged
+  assert.equal(estimateCost("claude-sonnet-5", { cacheRead: M }), 0.2);
+});
+
+test("estimateCost prices Opus 5.5 at its own base rate, writes at 1.25x/2x of it", () => {
+  const M = 1_000_000;
+  assert.equal(estimateCost("claude-opus-5-5", { in: M, out: M }), 24);
+  assert.equal(estimateCost("claude-opus-5-5", { cacheCreate: M }), 5);
+  assert.equal(estimateCost("claude-opus-5-5", { cacheCreate: M, cacheCreate1h: M }), 8);
+});
+
+test("rateFor: model default beats family default, family override beats both", () => {
+  assert.deepEqual(rateFor("claude-opus-5-5"), [4, 20]);
+  assert.deepEqual(rateFor("claude-opus-5"), [5, 25]);
+  assert.deepEqual(rateFor("claude-opus-5-5", { opus: { in: 5, out: 25 } }), [5, 25]);
+});
+
+test("aggregateByModel still groups Opus 5.5 under opus", () => {
+  const now = 1_000_000_000;
+  const out = aggregateByModel([R("claude-opus-5-5", now, 1_000_000, 0), R("claude-opus-5", now, 1_000_000, 0)], now - 1000);
+  assert.deepEqual(out.map((e) => e.model), ["opus"]);
+  assert.equal(out[0].cost, 9); // 4 + 5
 });
 
 // ---------- budgetPct ----------

@@ -14,7 +14,27 @@ export function windowStartMs(kind, now) {
 }
 
 // Per-MTok rates (USD): [inputRate, outputRate], keyed by model family.
-const RATES = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5], fable: [10, 50] };
+// Price list checked 2026-09-23. Sonnet 5 is $2/$10 (the introductory price became
+// the standard one); Sonnet 4.x is still $3/$15 but shares the family key.
+const RATES = { opus: [5, 25], sonnet: [2, 10], haiku: [1, 5], fable: [10, 50] };
+
+// Models priced below their family default, keyed by an id substring. Consulted
+// after a family override and before the family default, so a user who overrides
+// `opus` also overrides Opus 5.5. Deliberately NOT a new family: familyOf drives
+// the Model key's rotation and the override keys in global settings.
+const MODEL_RATES = { "opus-5-5": [4, 20] };
+
+// Cache-read multiplier on the input rate, by id substring. Fable 5 and 5.1 share
+// a family but read at different rates, hence the per-model lookup. Unknown ids
+// fall back to 0.1x, so a future model is never priced below list.
+const CACHE_READ_MULTS = { "fable-5-1": 0.025, "mythos-5-1": 0.025, "opus-5-5": 0.05 };
+const CACHE_READ_MULT_DEFAULT = 0.1;
+
+function modelEntry(table, model) {
+  const m = String(model ?? "").toLowerCase();
+  for (const [key, v] of Object.entries(table)) if (m.includes(key)) return v;
+  return undefined;
+}
 
 function validNum(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
@@ -33,18 +53,19 @@ export function familyOf(model) {
 }
 
 // [inR, outR] for a model id (family-prefix match), or null if unpriceable.
-// `overrides` (per family {in,out}) win over defaults; mythos uses the fable key.
+// Precedence per field: family override, then model default, then family default;
+// mythos uses the fable key.
 export function rateFor(model, overrides) {
   const fam = familyOf(model);
   if (!fam) return null;
-  const [dIn, dOut] = RATES[fam];
+  const [dIn, dOut] = modelEntry(MODEL_RATES, model) ?? RATES[fam];
   const o = overrides?.[fam];
   return [validNum(o?.in) ?? dIn, validNum(o?.out) ?? dOut];
 }
 
-// Cache multipliers on the input rate. A read is ~0.1x; a write depends on the
-// entry's TTL — 1.25x for the 5-minute default, 2x for a 1-hour entry.
-const CACHE_READ_MULT = 0.1;
+// Cache multipliers on the input rate. A read is 0.1x for most models (see
+// CACHE_READ_MULTS for the exceptions); a write depends on the entry's TTL —
+// 1.25x for the 5-minute default, 2x for a 1-hour entry.
 const CACHE_WRITE_5M_MULT = 1.25;
 const CACHE_WRITE_1H_MULT = 2;
 
@@ -65,7 +86,7 @@ export function estimateCost(model, tok, overrides) {
   return (
     (t.in || 0) * inR +
     (t.out || 0) * outR +
-    (t.cacheRead || 0) * CACHE_READ_MULT * inR +
+    (t.cacheRead || 0) * (modelEntry(CACHE_READ_MULTS, model) ?? CACHE_READ_MULT_DEFAULT) * inR +
     (write - write1h) * CACHE_WRITE_5M_MULT * inR +
     write1h * CACHE_WRITE_1H_MULT * inR
   ) / 1e6;

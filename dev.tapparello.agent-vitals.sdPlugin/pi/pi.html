@@ -20,7 +20,7 @@
 <div id="form"></div>
 <script>
 let ws, piUuid, settings = {}, action = "", models = [], gs = {}, gsReady = false;
-const RATE_DEFAULTS = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5], fable: [10, 50] };
+const RATE_DEFAULTS = { opus: [5, 25], sonnet: [2, 10], haiku: [1, 5], fable: [10, 50] };
 const BUDGET_FIELD = { key: "budget", type: "number", label: "Budget $ for this window (optional - turns the key into a % ring)" };
 const INSTALL_FIELD = { key: "_install", type: "install", label: "One-time setup - merge into the \"hooks\" object of ~/.claude/settings.json, then restart Claude Code" };
 const FIELDS = {

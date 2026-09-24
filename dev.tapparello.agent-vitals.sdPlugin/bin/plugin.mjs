@@ -3882,7 +3882,15 @@ function windowStartMs(kind, now) {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
-var RATES = { opus: [5, 25], sonnet: [3, 15], haiku: [1, 5], fable: [10, 50] };
+var RATES = { opus: [5, 25], sonnet: [2, 10], haiku: [1, 5], fable: [10, 50] };
+var MODEL_RATES = { "opus-5-5": [4, 20] };
+var CACHE_READ_MULTS = { "fable-5-1": 0.025, "mythos-5-1": 0.025, "opus-5-5": 0.05 };
+var CACHE_READ_MULT_DEFAULT = 0.1;
+function modelEntry(table, model) {
+  const m = String(model ?? "").toLowerCase();
+  for (const [key, v] of Object.entries(table)) if (m.includes(key)) return v;
+  return void 0;
+}
 function validNum(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : void 0;
 }
@@ -3897,11 +3905,10 @@ function familyOf(model) {
 function rateFor(model, overrides) {
   const fam = familyOf(model);
   if (!fam) return null;
-  const [dIn, dOut] = RATES[fam];
+  const [dIn, dOut] = modelEntry(MODEL_RATES, model) ?? RATES[fam];
   const o = overrides?.[fam];
   return [validNum(o?.in) ?? dIn, validNum(o?.out) ?? dOut];
 }
-var CACHE_READ_MULT = 0.1;
 var CACHE_WRITE_5M_MULT = 1.25;
 var CACHE_WRITE_1H_MULT = 2;
 function estimateCost(model, tok, overrides) {
@@ -3911,7 +3918,7 @@ function estimateCost(model, tok, overrides) {
   const t = tok || {};
   const write = t.cacheCreate || 0;
   const write1h = Math.min(t.cacheCreate1h || 0, write);
-  return ((t.in || 0) * inR + (t.out || 0) * outR + (t.cacheRead || 0) * CACHE_READ_MULT * inR + (write - write1h) * CACHE_WRITE_5M_MULT * inR + write1h * CACHE_WRITE_1H_MULT * inR) / 1e6;
+  return ((t.in || 0) * inR + (t.out || 0) * outR + (t.cacheRead || 0) * (modelEntry(CACHE_READ_MULTS, model) ?? CACHE_READ_MULT_DEFAULT) * inR + (write - write1h) * CACHE_WRITE_5M_MULT * inR + write1h * CACHE_WRITE_1H_MULT * inR) / 1e6;
 }
 function totalOf(tok) {
   return tok.in + tok.out + tok.cacheRead + tok.cacheCreate;
